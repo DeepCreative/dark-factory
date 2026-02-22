@@ -1,0 +1,46 @@
+apiVersion: bravozero.ai/v1
+kind: ServiceManifest
+metadata:
+  repo: services/dark-factory
+  namespace: dark-factory
+
+spec:
+  services:
+    - id: dark-factory
+      name: Dark Factory
+      description: Dark Factory pipeline — Judge-01 Scenario Eval inference backend (phase 1); Spec Engine, Attractor, Scenario Executor, DTU Controller (future phases)
+      tier: platform
+      owner: swe-agent-team
+      lifecycle: active
+      health_endpoint: /health
+
+      exposure:
+        tier: cluster-only
+        protocol: https
+        port: 8080
+        health_path: /health
+
+      dependencies:
+        - persona
+        - sdsm
+
+      dev:
+        port: 8090
+        domain: dark-factory.bz.test
+        backend:
+          command: make dev
+          health: http://localhost:8090/health
+
+      deployments:
+        development:
+          - type: docker-compose
+            service: dark-factory
+            port: 8090
+        staging:
+          - cluster: bravozero-staging
+            namespace: dark-factory
+            port: 8080
+            replicas: 1
+            resources:
+              cpu: 250m
+              memory: 512Mi

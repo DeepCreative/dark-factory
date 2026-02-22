@@ -1,0 +1,48 @@
+[project]
+name = "dark-factory"
+version = "0.1.0"
+description = "Dark Factory pipeline services — Judge-01 Scenario Eval, Spec Engine, Attractor, Scenario Executor, DTU Controller"
+requires-python = ">=3.11"
+license = {text = "Proprietary"}
+dependencies = [
+    "fastapi>=0.115.0",
+    "pydantic>=2.0",
+    "uvicorn[standard]>=0.30.0",
+    "structlog>=24.0.0",
+]
+
+[project.optional-dependencies]
+sagemaker = ["boto3>=1.34.0"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.5.0",
+    "mypy>=1.10",
+    "httpx>=0.27.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["dark_factory*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = ["dark_factory", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+warn_return_any = true
+warn_unused_configs = true
