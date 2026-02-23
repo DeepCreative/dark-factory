@@ -10,7 +10,11 @@ import structlog
 from fastapi import FastAPI, Request, Response
 
 from dark_factory import __version__
+from dark_factory.attractor.router import router as attractor_router
+from dark_factory.dtu_controller.router import router as dtu_router
 from dark_factory.judge.router import router as judge_router
+from dark_factory.scenario_executor.router import router as scenario_router
+from dark_factory.spec_engine.router import router as spec_router
 
 logger = structlog.get_logger()
 
@@ -33,6 +37,10 @@ app = FastAPI(
 )
 
 app.include_router(judge_router)
+app.include_router(spec_router)
+app.include_router(scenario_router)
+app.include_router(attractor_router)
+app.include_router(dtu_router)
 
 
 @app.get("/health")
