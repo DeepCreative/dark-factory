@@ -46,6 +46,9 @@ app = FastAPI(
     title="Dark Factory",
     version=__version__,
     lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 app.include_router(judge_router)
