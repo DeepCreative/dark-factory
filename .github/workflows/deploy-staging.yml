@@ -1,0 +1,41 @@
+name: Deploy Staging
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  gate:
+    uses: DeepCreative/.github/.github/workflows/ci-gate.yml@main
+    with:
+      conclusion: ${{ github.event.workflow_run.conclusion || '' }}
+    permissions:
+      actions: read
+
+  build:
+    needs: gate
+    uses: DeepCreative/.github/.github/workflows/docker-build-push.yml@main
+    with:
+      image-name: bravozero/dark-factory
+      role-to-assume: arn:aws:iam::113513624033:role/github-actions-ecr-push
+    secrets: inherit
+
+  deploy:
+    needs: build
+    uses: DeepCreative/.github/.github/workflows/k8s-deploy.yml@main
+    with:
+      cluster-name: bravozero-staging
+      namespace: staging
+      manifests-path: k8s/overlays/bz-staging
+      image-tag: ${{ needs.build.outputs.image-tag }}
+      image-name: bravozero/dark-factory
+      deployment-name: dark-factory
+      role-to-assume: arn:aws:iam::113513624033:role/github-actions-ecr-push
+    secrets: inherit

@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  ci:
+    uses: DeepCreative/.github/.github/workflows/ci-python.yml@main
+    with:
+      python-version: '3.11'
+    secrets: inherit
+
+  internal-only:
+    uses: DeepCreative/.github/.github/workflows/ci-internal-service.yml@main

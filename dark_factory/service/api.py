@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI, Request, Response
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 
 from dark_factory import __version__
 from dark_factory.attractor.router import router as attractor_router
@@ -19,6 +20,17 @@ from dark_factory.spec_engine.router import router as spec_router
 logger = structlog.get_logger()
 
 _start_time: float = 0.0
+
+REQUEST_COUNT = Counter(
+    "http_requests_total",
+    "Total HTTP requests",
+    ["method", "path", "status"],
+)
+REQUEST_DURATION = Histogram(
+    "http_request_duration_seconds",
+    "HTTP request duration in seconds",
+    ["method", "path"],
+)
 
 
 @asynccontextmanager
@@ -53,16 +65,25 @@ async def ready() -> dict:
     return {"status": "ready", "uptime_seconds": round(time.monotonic() - _start_time, 2)}
 
 
+@app.get("/metrics")
+async def metrics() -> Response:
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
 @app.middleware("http")
 async def request_logging(request: Request, call_next) -> Response:  # type: ignore[no-untyped-def]
     start = time.monotonic()
     response: Response = await call_next(request)
-    elapsed = round((time.monotonic() - start) * 1000, 2)
+    elapsed = time.monotonic() - start
+    path = request.url.path
+    if path not in ("/health", "/ready", "/metrics"):
+        REQUEST_COUNT.labels(method=request.method, path=path, status=response.status_code).inc()
+        REQUEST_DURATION.labels(method=request.method, path=path).observe(elapsed)
     logger.info(
         "http.request",
         method=request.method,
-        path=request.url.path,
+        path=path,
         status=response.status_code,
-        elapsed_ms=elapsed,
+        elapsed_ms=round(elapsed * 1000, 2),
     )
     return response
