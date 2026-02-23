@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
+from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class SpecState(StrEnum):
+class SpecState(str, Enum):  # noqa: UP042
     DRAFT = "draft"
     REVIEW = "review"
     PUBLISHED = "published"

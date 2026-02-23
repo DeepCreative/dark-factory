@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
+from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class ScenarioStatus(StrEnum):
+class ScenarioStatus(str, Enum):  # noqa: UP042
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"

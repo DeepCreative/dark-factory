@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
+from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class TwinStatus(StrEnum):
+class TwinStatus(str, Enum):  # noqa: UP042
     PENDING = "pending"
     PROVISIONING = "provisioning"
     READY = "ready"

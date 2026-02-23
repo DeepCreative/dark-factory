@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
+from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class ConvergenceState(StrEnum):
+class ConvergenceState(str, Enum):  # noqa: UP042
     INITIALIZING = "initializing"
     GENERATING = "generating"
     VERIFYING = "verifying"
@@ -19,7 +19,7 @@ class ConvergenceState(StrEnum):
     BUDGET_EXHAUSTED = "budget_exhausted"
 
 
-class ExecutionMode(StrEnum):
+class ExecutionMode(str, Enum):  # noqa: UP042
     AUTONOMOUS = "autonomous"
     SUPERVISED = "supervised"
     DEBUG = "debug"
