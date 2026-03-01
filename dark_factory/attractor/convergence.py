@@ -28,6 +28,25 @@ logger = structlog.get_logger()
 
 STALL_DELTA_THRESHOLD = 0.01
 
+# Stable contract: the tool names Codex-01 is allowed to use during convergence.
+# The authoritative ToolDefinition objects live in d3n_core.flash_apps.coding_tools
+# (get_convergence_coding_tools). dark-factory references names only to avoid a
+# cross-package import; the SWE Fleet gateway resolves names to definitions.
+CONVERGENCE_TOOL_SET: frozenset[str] = frozenset(
+    {
+        "shell.execute",
+        "fs.read_file",
+        "fs.write_file",
+        "fs.edit_file",
+        "fs.search_files",
+        "fs.glob_files",
+        "fs.list_directory",
+        "fs.file_info",
+        "git.show",
+        "git.log",
+    }
+)
+
 
 class AttractorEngine:
     """Core convergence engine for Dark Factory spec satisfaction."""
@@ -182,9 +201,21 @@ class AttractorEngine:
         return CodebaseContext(service_name=service_name)
 
     async def _generate(self, spec: dict, iteration: int, *, context: CodebaseContext | None = None) -> float:
-        """Generate or update code via D3N SWE Fleet. Returns estimated cost."""
+        """Generate or update code via D3N SWE Fleet. Returns estimated cost.
+
+        When wired to the Fleet, the generation request must specify
+        ``tool_set=CONVERGENCE_TOOL_SET`` (or the equivalent
+        ``get_convergence_coding_tools()`` from ``d3n_core.flash_apps.coding_tools``)
+        so that Codex-01 operates with the scoped 10-tool subset during
+        convergence, excluding unsafe operational git commands.
+        """
         ctx_svc = context.service_name if context else None
-        logger.debug("attractor.generate", iteration=iteration, context_service=ctx_svc)
+        logger.debug(
+            "attractor.generate",
+            iteration=iteration,
+            context_service=ctx_svc,
+            tool_set_size=len(CONVERGENCE_TOOL_SET),
+        )
         return 0.50
 
     async def _verify(self, spec_id: str) -> float:
