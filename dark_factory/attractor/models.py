@@ -17,6 +17,7 @@ class ConvergenceState(str, Enum):  # noqa: UP042
     CONVERGED = "converged"
     STALLED = "stalled"
     BUDGET_EXHAUSTED = "budget_exhausted"
+    AMENDMENT_PROPOSED = "amendment_proposed"
 
 
 class ExecutionMode(str, Enum):  # noqa: UP042
@@ -24,6 +25,13 @@ class ExecutionMode(str, Enum):  # noqa: UP042
     SUPERVISED = "supervised"
     DEBUG = "debug"
     BENCHMARK = "benchmark"
+
+
+class AmendmentDiagnosis(str, Enum):  # noqa: UP042
+    AMBIGUOUS = "ambiguous"
+    CONTRADICTORY = "contradictory"
+    UNSATISFIABLE = "unsatisfiable"
+    UNDERSPECIFIED = "underspecified"
 
 
 class BudgetAllocation(BaseModel):
@@ -44,6 +52,30 @@ class BudgetAllocation(BaseModel):
     @property
     def judge_budget(self) -> float:
         return self.total_budget_usd * self.judge_pct
+
+
+class AmendmentProposal(BaseModel):
+    """Proposal to amend a spec criterion that appears unsatisfiable."""
+
+    criterion_ref: str
+    current_score: float
+    iterations_stuck: int
+    diagnosis: AmendmentDiagnosis
+    suggestion: str
+
+
+class CodebaseContext(BaseModel):
+    """Discovered codebase context for a target service.
+
+    Built by the Attractor before generation so Codex-01 has awareness
+    of existing code, interfaces, and test patterns.
+    """
+
+    service_name: str
+    discovered_files: list[str] = Field(default_factory=list)
+    interface_files: list[str] = Field(default_factory=list)
+    test_patterns: list[str] = Field(default_factory=list)
+    existing_dependencies: list[str] = Field(default_factory=list)
 
 
 class IterationResult(BaseModel):
@@ -76,6 +108,7 @@ class ConvergeResponse(BaseModel):
     iteration_history: list[IterationResult] = Field(default_factory=list)
     budget_spent_usd: float = 0.0
     code_artifact_ref: str | None = None
+    amendments: list[AmendmentProposal] = Field(default_factory=list)
     error: str | None = None
 
 

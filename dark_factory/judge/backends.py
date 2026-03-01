@@ -79,4 +79,17 @@ class SageMakerBackend(JudgeBackend):
             Body=payload.encode("utf-8"),
         )
         body = response["Body"].read().decode("utf-8")
-        return json.loads(body)
+        data = json.loads(body)
+
+        if "score" not in data:
+            logger.warning(
+                "judge.sagemaker.missing_score",
+                response_keys=list(data.keys()),
+                body_preview=body[:200],
+            )
+            data.setdefault("score", 0.0)
+        if not isinstance(data.get("score"), (int, float)):
+            logger.warning("judge.sagemaker.invalid_score_type", score_value=data["score"])
+            data["score"] = 0.0
+
+        return data

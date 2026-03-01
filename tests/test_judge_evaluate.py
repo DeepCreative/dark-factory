@@ -60,6 +60,44 @@ async def test_evaluate_score_bounds() -> None:
         EvaluateResponse(score=-0.1, reasoning=None, model_version=None)
 
 
+# ---------- SageMaker response validation ----------
+
+
+@pytest.mark.asyncio
+async def test_sagemaker_backend_validates_missing_score() -> None:
+    """SageMaker backend defaults score to 0.0 when 'score' key is absent."""
+    from unittest.mock import MagicMock
+
+    backend = __import__("dark_factory.judge.backends", fromlist=["SageMakerBackend"]).SageMakerBackend(
+        endpoint_name="test-endpoint"
+    )
+    mock_client = MagicMock()
+    mock_client.invoke_endpoint.return_value = {"Body": MagicMock(read=lambda: b'{"reasoning": "no score key"}')}
+    backend._client = mock_client
+
+    result = await backend.evaluate(EvaluateRequest(**VALID_PAYLOAD))
+    assert result.score == 0.0
+    assert result.reasoning == "no score key"
+
+
+@pytest.mark.asyncio
+async def test_sagemaker_backend_validates_invalid_score_type() -> None:
+    """SageMaker backend defaults score to 0.0 when score is not numeric."""
+    from unittest.mock import MagicMock
+
+    backend = __import__("dark_factory.judge.backends", fromlist=["SageMakerBackend"]).SageMakerBackend(
+        endpoint_name="test-endpoint"
+    )
+    mock_client = MagicMock()
+    mock_client.invoke_endpoint.return_value = {
+        "Body": MagicMock(read=lambda: b'{"score": "high", "reasoning": "bad type"}')
+    }
+    backend._client = mock_client
+
+    result = await backend.evaluate(EvaluateRequest(**VALID_PAYLOAD))
+    assert result.score == 0.0
+
+
 # ---------- invalid backend mode ----------
 
 
