@@ -14,9 +14,13 @@ from __future__ import annotations
 import structlog
 
 from dark_factory.attractor.models import (
+    AmendmentDiagnosis,
+    AmendmentProposal,
+    CodebaseContext,
     ConvergenceState,
     ConvergeRequest,
     ConvergeResponse,
+    ExecutionMode,
     IterationResult,
 )
 
@@ -55,6 +59,7 @@ class AttractorEngine:
         stall_count = 0
         current_satisfaction = 0.0
         code_artifact_ref: str | None = None
+        context: CodebaseContext | None = None
 
         for iteration in range(1, request.max_iterations + 1):
             if total_spent >= request.budget.total_budget_usd:
@@ -62,8 +67,11 @@ class AttractorEngine:
                 logger.warning("attractor.budget_exhausted", spent=total_spent)
                 break
 
+            if context is None:
+                context = await self._build_context(request.spec)
+
             state = ConvergenceState.GENERATING
-            gen_cost = await self._generate(request.spec, iteration)
+            gen_cost = await self._generate(request.spec, iteration, context=context)
             total_spent += gen_cost
 
             state = ConvergenceState.VERIFYING
@@ -108,14 +116,42 @@ class AttractorEngine:
                 break
 
             if stall_count >= request.stall_limit:
-                state = ConvergenceState.STALLED
                 logger.warning(
                     "attractor.stalled",
                     iterations=iteration,
                     satisfaction=satisfaction,
                     stall_count=stall_count,
                 )
+
+                amendments = self._detect_amendment_candidates(history, request.stall_limit)
+
+                if amendments and request.mode == ExecutionMode.SUPERVISED:
+                    state = ConvergenceState.AMENDMENT_PROPOSED
+                    logger.info(
+                        "attractor.amendment_proposed",
+                        count=len(amendments),
+                        criteria=[a.criterion_ref for a in amendments],
+                    )
+                    return ConvergeResponse(
+                        spec_id=request.spec_id,
+                        state=state,
+                        iterations_completed=len(history),
+                        final_satisfaction=current_satisfaction,
+                        iteration_history=history,
+                        budget_spent_usd=round(total_spent, 4),
+                        amendments=amendments,
+                    )
+
+                if amendments:
+                    logger.info(
+                        "attractor.amendment_logged",
+                        mode=request.mode,
+                        count=len(amendments),
+                        criteria=[a.criterion_ref for a in amendments],
+                    )
+
                 state = ConvergenceState.REGENERATING
+                context = None  # re-discover context on next iteration
                 regen_cost = await self._strategic_regenerate(request.spec, criteria_scores)
                 total_spent += regen_cost
                 stall_count = 0
@@ -133,9 +169,22 @@ class AttractorEngine:
             code_artifact_ref=code_artifact_ref,
         )
 
-    async def _generate(self, spec: dict, iteration: int) -> float:
+    async def _build_context(self, spec: dict) -> CodebaseContext:
+        """Discover codebase context for the target service before generation.
+
+        Extracts domain info from the spec and resolves the target service.
+        Stub implementation — will wire to SWE Fleet filesystem tools when
+        DTU environments are operational.
+        """
+        domain = spec.get("domain", {})
+        service_name = domain.get("service", "unknown")
+        logger.info("attractor.build_context", service=service_name)
+        return CodebaseContext(service_name=service_name)
+
+    async def _generate(self, spec: dict, iteration: int, *, context: CodebaseContext | None = None) -> float:
         """Generate or update code via D3N SWE Fleet. Returns estimated cost."""
-        logger.debug("attractor.generate", iteration=iteration)
+        ctx_svc = context.service_name if context else None
+        logger.debug("attractor.generate", iteration=iteration, context_service=ctx_svc)
         return 0.50
 
     async def _verify(self, spec_id: str) -> float:
@@ -182,6 +231,58 @@ class AttractorEngine:
             logger.warning("attractor.evaluate.error", error=str(e))
 
         return 0.5, {}, 0.20
+
+    def _detect_amendment_candidates(
+        self,
+        history: list[IterationResult],
+        window: int,
+    ) -> list[AmendmentProposal]:
+        """Identify criteria that are consistently failing and may need spec amendment.
+
+        A criterion is flagged if its score stayed below 0.3 across the last
+        `window` iterations while at least one other criterion exceeded 0.7.
+        This indicates the problem is likely the criterion, not the generation.
+        """
+        if len(history) < window:
+            return []
+
+        recent = history[-window:]
+        all_criteria: set[str] = set()
+        for r in recent:
+            all_criteria.update(r.criteria_scores.keys())
+
+        if not all_criteria:
+            return []
+
+        amendments: list[AmendmentProposal] = []
+        has_healthy = False
+        for crit in all_criteria:
+            scores = [r.criteria_scores.get(crit) for r in recent]
+            valid = [s for s in scores if s is not None]
+            if valid and max(valid) > 0.7:
+                has_healthy = True
+                break
+
+        for crit in all_criteria:
+            scores = [r.criteria_scores.get(crit) for r in recent]
+            valid = [s for s in scores if s is not None]
+            if not valid:
+                continue
+            avg = sum(valid) / len(valid)
+            if avg < 0.3 and has_healthy:
+                diagnosis = AmendmentDiagnosis.AMBIGUOUS if avg > 0.15 else AmendmentDiagnosis.UNSATISFIABLE
+                amendments.append(
+                    AmendmentProposal(
+                        criterion_ref=crit,
+                        current_score=round(avg, 4),
+                        iterations_stuck=window,
+                        diagnosis=diagnosis,
+                        suggestion=f"Criterion '{crit}' scored {avg:.2f} avg over {window} iterations "
+                        f"while other criteria passed. Consider clarifying or splitting.",
+                    )
+                )
+
+        return amendments
 
     async def _strategic_regenerate(self, spec: dict, weak_criteria: dict[str, float]) -> float:
         """Targeted regeneration focusing on lowest-scoring criteria."""
