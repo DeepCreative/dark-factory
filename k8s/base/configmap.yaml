@@ -6,8 +6,8 @@ metadata:
     app: dark-factory
     app.kubernetes.io/name: dark-factory
 data:
-  JUDGE_BACKEND_MODE: "stub"
-  SAGEMAKER_ENDPOINT_NAME: "judge-01-scenario-eval"
+  JUDGE_BACKEND_MODE: "sagemaker"
+  SAGEMAKER_ENDPOINT_NAME: "d3n-judge-01-endpoint"
   AWS_DEFAULT_REGION: "us-west-2"
   DTU_BASE_URL: ""
   JUDGE_URL: "http://dark-factory.staging.svc.cluster.local:8080"
