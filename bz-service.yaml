@@ -2,7 +2,6 @@ apiVersion: bravozero.ai/v1
 kind: ServiceManifest
 metadata:
   repo: services/dark-factory
-  namespace: dark-factory
 
 spec:
   services:
