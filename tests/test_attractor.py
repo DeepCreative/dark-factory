@@ -12,6 +12,10 @@ from dark_factory.attractor.models import (
     ExecutionMode,
     IterationResult,
 )
+from dark_factory.attractor.task_entropy import (
+    AttractorEntropyConfig,
+    AttractorEntropyEstimator,
+)
 from httpx import AsyncClient
 
 
@@ -180,3 +184,159 @@ async def test_amendment_logged_in_autonomous_mode() -> None:
     )
     # Should NOT be AMENDMENT_PROPOSED — autonomous mode continues
     assert result.state != ConvergenceState.AMENDMENT_PROPOSED
+
+
+# ---------- task entropy estimator ----------
+
+
+class TestAttractorEntropyEstimator:
+    """Tests for the AttractorEntropyEstimator."""
+
+    def test_minimal_spec_low_entropy(self) -> None:
+        """A minimal spec with few signals produces low entropy."""
+        estimator = AttractorEntropyEstimator()
+        spec = {"description": "Fix a typo", "acceptance_criteria": []}
+        result = estimator.estimate(spec)
+        assert 0.0 <= result.score <= 1.0
+        assert result.score < 0.35
+        assert result.routing == "flat"
+
+    def test_complex_spec_high_entropy(self) -> None:
+        """A complex spec with many files and dependencies produces high entropy."""
+        estimator = AttractorEntropyEstimator()
+        spec = {
+            "description": (
+                "Refactor the authentication module to support OAuth 2.1 with PKCE, "
+                "migrate the session store from Redis to PostgreSQL, add integration "
+                "tests for all token flows, update API docs, and design a rollback "
+                "strategy for the database migration across environments"
+            ),
+            "target_files": [f"src/auth/file_{i}.py" for i in range(15)],
+            "dependencies": ["redis", "postgresql", "httpx", "jose", "pydantic", "alembic"],
+            "requires_new_files": True,
+            "domain": {"complexity": "high"},
+        }
+        result = estimator.estimate(spec)
+        assert result.score >= 0.65
+        assert result.routing == "structured"
+
+    def test_medium_complexity_routes_flat_decomposed(self) -> None:
+        """A moderately complex spec routes to flat_decomposed."""
+        estimator = AttractorEntropyEstimator()
+        spec = {
+            "description": (
+                "Add a new API endpoint for user profile updates with input validation, "
+                "error handling, database migrations for the new fields, and unit tests "
+                "covering edge cases for partial updates and concurrent modifications"
+            ),
+            "target_files": [
+                "src/api/users.py",
+                "src/models/user.py",
+                "src/validators/profile.py",
+                "tests/test_users.py",
+                "migrations/add_profile_fields.py",
+                "src/api/schemas.py",
+            ],
+            "dependencies": ["pydantic", "httpx", "sqlalchemy", "alembic"],
+            "domain": {"complexity": "medium"},
+        }
+        result = estimator.estimate(spec)
+        assert 0.35 <= result.score <= 0.65
+        assert result.routing == "flat_decomposed"
+
+    def test_custom_config_shifts_thresholds(self) -> None:
+        """Custom config theta_low/theta_high changes routing classification."""
+        config = AttractorEntropyConfig(theta_low=0.0, theta_high=0.1)
+        estimator = AttractorEntropyEstimator(config=config)
+        spec = {
+            "description": "Add input validation to the form handler with error messages",
+            "target_files": ["src/forms.py", "src/validators.py"],
+            "dependencies": ["pydantic"],
+            "domain": {"complexity": "medium"},
+        }
+        result = estimator.estimate(spec)
+        assert result.score > 0.1
+        assert result.routing == "structured"
+
+    def test_signals_included_in_result(self) -> None:
+        """Entropy estimate includes raw signal values."""
+        estimator = AttractorEntropyEstimator()
+        spec = {
+            "description": "Update configuration",
+            "target_files": ["config.yaml"],
+            "dependencies": [],
+        }
+        result = estimator.estimate(spec)
+        assert "description_length" in result.signals
+        assert "file_count" in result.signals
+        assert "dependency_count" in result.signals
+        assert "requires_new_files" in result.signals
+        assert "domain_complexity" in result.signals
+
+    def test_description_fallback_to_criteria(self) -> None:
+        """When no description is present, acceptance_criteria text is used."""
+        estimator = AttractorEntropyEstimator()
+        spec = {
+            "acceptance_criteria": [
+                {"criterion": "All tokens must be rotated within 24 hours"},
+                {"criterion": "Revoked tokens must be rejected immediately"},
+            ]
+        }
+        result = estimator.estimate(spec)
+        assert result.signals["description_length"] > 0
+
+    def test_domain_complexity_string_mapping(self) -> None:
+        """String-based domain complexity increases entropy score monotonically."""
+        estimator = AttractorEntropyEstimator()
+        scores: dict[str, float] = {}
+        for label in ("low", "medium", "high", "critical"):
+            spec = {
+                "description": "Task description for complexity testing with enough length to matter",
+                "domain": {"complexity": label},
+                "target_files": [f"f{i}" for i in range(5)],
+                "dependencies": ["dep1", "dep2", "dep3"],
+            }
+            result = estimator.estimate(spec)
+            scores[label] = result.score
+
+        assert scores["low"] < scores["medium"]
+        assert scores["medium"] < scores["high"]
+        assert scores["high"] < scores["critical"]
+
+
+# ---------- convergence report includes entropy ----------
+
+
+@pytest.mark.asyncio
+async def test_convergence_report_includes_entropy() -> None:
+    """Convergence iteration results include task_entropy and routing."""
+    engine = AttractorEngine()
+    result = await engine.converge(_make_request(max_iterations=2))
+    assert result.iterations_completed > 0
+    for h in result.iteration_history:
+        assert h.task_entropy is not None
+        assert 0.0 <= h.task_entropy <= 1.0
+        assert h.task_entropy_routing in ("flat", "flat_decomposed", "structured")
+
+
+@pytest.mark.asyncio
+async def test_entropy_logging(capfd) -> None:
+    """Entropy estimation emits structlog events during convergence."""
+    import io
+
+    import structlog
+
+    output = io.StringIO()
+    structlog.configure(
+        processors=[
+            structlog.dev.ConsoleRenderer(),
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(0),
+        logger_factory=structlog.PrintLoggerFactory(file=output),
+    )
+
+    engine = AttractorEngine()
+    await engine.converge(_make_request(max_iterations=1))
+
+    log_output = output.getvalue()
+    assert "entropy.attractor_routing" in log_output or "attractor.iteration" in log_output

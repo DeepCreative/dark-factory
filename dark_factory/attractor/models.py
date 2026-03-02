@@ -85,6 +85,8 @@ class IterationResult(BaseModel):
     criteria_scores: dict[str, float] = Field(default_factory=dict)
     budget_spent_usd: float = 0.0
     stall_count: int = 0
+    task_entropy: float | None = None
+    task_entropy_routing: str | None = None
 
 
 class ConvergeRequest(BaseModel):

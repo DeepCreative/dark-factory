@@ -23,6 +23,7 @@ from dark_factory.attractor.models import (
     ExecutionMode,
     IterationResult,
 )
+from dark_factory.attractor.task_entropy import AttractorEntropyEstimator
 
 logger = structlog.get_logger()
 
@@ -60,6 +61,7 @@ class AttractorEngine:
         self._scenario_url = scenario_executor_url
         self._judge_url = judge_url
         self._dtu_url = dtu_url
+        self._entropy_estimator = AttractorEntropyEstimator()
 
     async def converge(self, request: ConvergeRequest) -> ConvergeResponse:
         """Run the convergence loop until satisfaction threshold, budget, or stall."""
@@ -89,6 +91,20 @@ class AttractorEngine:
             if context is None:
                 context = await self._build_context(request.spec)
 
+            entropy_estimate = self._entropy_estimator.estimate(
+                request.spec,
+                iteration=iteration,
+                context_file_count=len(context.discovered_files) if context else 0,
+            )
+
+            logger.info(
+                "entropy.attractor_routing",
+                iteration=iteration,
+                task_entropy=entropy_estimate.score,
+                task_entropy_routing=entropy_estimate.routing,
+                signals=entropy_estimate.signals,
+            )
+
             state = ConvergenceState.GENERATING
             gen_cost = await self._generate(request.spec, iteration, context=context)
             total_spent += gen_cost
@@ -116,6 +132,8 @@ class AttractorEngine:
                 criteria_scores=criteria_scores,
                 budget_spent_usd=round(gen_cost + verify_cost + eval_cost, 4),
                 stall_count=stall_count,
+                task_entropy=entropy_estimate.score,
+                task_entropy_routing=entropy_estimate.routing,
             )
             history.append(result)
 
@@ -126,6 +144,8 @@ class AttractorEngine:
                 delta=delta,
                 stall_count=stall_count,
                 spent=total_spent,
+                task_entropy=entropy_estimate.score,
+                task_entropy_routing=entropy_estimate.routing,
             )
 
             if satisfaction >= request.satisfaction_threshold:
@@ -318,5 +338,12 @@ class AttractorEngine:
     async def _strategic_regenerate(self, spec: dict, weak_criteria: dict[str, float]) -> float:
         """Targeted regeneration focusing on lowest-scoring criteria."""
         lowest = sorted(weak_criteria.items(), key=lambda x: x[1])[:3] if weak_criteria else []
-        logger.info("attractor.strategic_regen", focus=[k for k, _ in lowest])
+
+        entropy_estimate = self._entropy_estimator.estimate(spec)
+        logger.info(
+            "attractor.strategic_regen",
+            focus=[k for k, _ in lowest],
+            task_entropy=entropy_estimate.score,
+            task_entropy_routing=entropy_estimate.routing,
+        )
         return 1.0
