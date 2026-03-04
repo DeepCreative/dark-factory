@@ -180,3 +180,73 @@ async def test_amendment_logged_in_autonomous_mode() -> None:
     )
     # Should NOT be AMENDMENT_PROPOSED — autonomous mode continues
     assert result.state != ConvergenceState.AMENDMENT_PROPOSED
+
+
+# =============================================================================
+# Darrow Gate Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_darrow_gate_blocks_on_violation() -> None:
+    """Convergence blocked when Darrow returns a violation."""
+
+    class DarrowBlockEngine(AttractorEngine):
+        async def _generate(self, spec, iteration, *, context=None):
+            return 0.10
+
+        async def _verify(self, spec_id):
+            return 0.05
+
+        async def _evaluate(self, spec_id, spec):
+            return 0.95, {"all": 0.95}, 0.05
+
+        async def _check_darrow_gate(self, spec_id, code_artifact_ref):
+            return {"blocked": True, "reason": "License conflict: GPL-3.0 in MIT repo"}
+
+    engine = DarrowBlockEngine()
+    result = await engine.converge(_make_request())
+    assert result.state == ConvergenceState.DARROW_BLOCKED
+    assert "License conflict" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_darrow_gate_allows_on_approval() -> None:
+    """Convergence proceeds when Darrow approves."""
+
+    class DarrowApproveEngine(AttractorEngine):
+        async def _generate(self, spec, iteration, *, context=None):
+            return 0.10
+
+        async def _verify(self, spec_id):
+            return 0.05
+
+        async def _evaluate(self, spec_id, spec):
+            return 0.95, {"all": 0.95}, 0.05
+
+        async def _check_darrow_gate(self, spec_id, code_artifact_ref):
+            return {"blocked": False}
+
+    engine = DarrowApproveEngine()
+    result = await engine.converge(_make_request())
+    assert result.state == ConvergenceState.CONVERGED
+    assert result.code_artifact_ref is not None
+
+
+@pytest.mark.asyncio
+async def test_darrow_gate_failopen_on_unreachable() -> None:
+    """Convergence proceeds (fail-open) when Darrow is unreachable."""
+
+    class DarrowUnreachableEngine(AttractorEngine):
+        async def _generate(self, spec, iteration, *, context=None):
+            return 0.10
+
+        async def _verify(self, spec_id):
+            return 0.05
+
+        async def _evaluate(self, spec_id, spec):
+            return 0.95, {"all": 0.95}, 0.05
+
+    engine = DarrowUnreachableEngine()
+    result = await engine.converge(_make_request())
+    assert result.state == ConvergenceState.CONVERGED

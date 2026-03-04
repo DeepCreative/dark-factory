@@ -18,6 +18,7 @@ class ConvergenceState(str, Enum):  # noqa: UP042
     STALLED = "stalled"
     BUDGET_EXHAUSTED = "budget_exhausted"
     AMENDMENT_PROPOSED = "amendment_proposed"
+    DARROW_BLOCKED = "darrow_blocked"
 
 
 class ExecutionMode(str, Enum):  # noqa: UP042

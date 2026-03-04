@@ -6,10 +6,13 @@ spec satisfaction. Each iteration:
   2. Verify via structural checks (Flash Apps)
   3. Execute scenarios in DTU
   4. Evaluate trajectories via Judge-01
-  5. Decide: converged, continue, or strategic regeneration
+  5. Darrow IP/license gate before merge
+  6. Decide: converged, continue, or strategic regeneration
 """
 
 from __future__ import annotations
+
+import os
 
 import structlog
 
@@ -25,6 +28,8 @@ from dark_factory.attractor.models import (
 )
 
 logger = structlog.get_logger()
+
+DARROW_URL = os.getenv("DARROW_URL", "")
 
 STALL_DELTA_THRESHOLD = 0.01
 
@@ -129,8 +134,28 @@ class AttractorEngine:
             )
 
             if satisfaction >= request.satisfaction_threshold:
-                state = ConvergenceState.CONVERGED
                 code_artifact_ref = f"artifact://{request.spec_id}/iter-{iteration}"
+
+                darrow_result = await self._check_darrow_gate(request.spec_id, code_artifact_ref)
+                if darrow_result.get("blocked"):
+                    state = ConvergenceState.DARROW_BLOCKED
+                    logger.warning(
+                        "attractor.darrow_blocked",
+                        spec_id=request.spec_id,
+                        reason=darrow_result.get("reason", "IP/license violation"),
+                    )
+                    return ConvergeResponse(
+                        spec_id=request.spec_id,
+                        state=state,
+                        iterations_completed=len(history),
+                        final_satisfaction=current_satisfaction,
+                        iteration_history=history,
+                        budget_spent_usd=round(total_spent, 4),
+                        code_artifact_ref=code_artifact_ref,
+                        error=f"Darrow gate blocked: {darrow_result.get('reason', 'IP/license violation')}",
+                    )
+
+                state = ConvergenceState.CONVERGED
                 logger.info("attractor.converged", iterations=iteration, satisfaction=satisfaction)
                 break
 
@@ -219,9 +244,83 @@ class AttractorEngine:
         return 0.50
 
     async def _verify(self, spec_id: str) -> float:
-        """Run structural verification (Flash App checks). Returns estimated cost."""
+        """Run structural verification (Flash App checks) + Darrow license scan.
+
+        Returns estimated cost.
+        """
         logger.debug("attractor.verify", spec_id=spec_id)
-        return 0.10
+        cost = 0.10
+
+        if DARROW_URL:
+            try:
+                import httpx
+
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.post(
+                        f"{DARROW_URL}/aria/legal/ip-assessment",
+                        json={
+                            "scan_type": "incremental",
+                            "repositories": [spec_id],
+                        },
+                    )
+                    if resp.status_code in (200, 201, 202):
+                        data = resp.json()
+                        if data.get("status") == "violation":
+                            logger.warning(
+                                "attractor.verify.license_violation",
+                                spec_id=spec_id,
+                                detail=data.get("detail"),
+                            )
+            except Exception as e:
+                logger.debug("attractor.verify.darrow_unavailable", error=str(e))
+
+        return cost
+
+    async def _check_darrow_gate(self, spec_id: str, code_artifact_ref: str) -> dict:
+        """Pre-merge Darrow compliance gate.
+
+        Checks IP/license compliance before allowing convergence to
+        finalize. Returns {"blocked": True, "reason": ...} if blocked,
+        {"blocked": False} otherwise. Fail-open if Darrow is unreachable.
+        """
+        if not DARROW_URL:
+            return {"blocked": False}
+
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(
+                    f"{DARROW_URL}/aria/legal/compliance-audit",
+                    json={
+                        "frameworks": ["export_control", "license_compliance"],
+                        "scope": spec_id,
+                        "priority": "high",
+                    },
+                )
+                if resp.status_code in (200, 201, 202):
+                    data = resp.json()
+                    if data.get("status") == "violation":
+                        return {
+                            "blocked": True,
+                            "reason": data.get("detail", "IP/license compliance violation"),
+                            "task_id": data.get("task_id"),
+                        }
+
+            logger.info(
+                "attractor.darrow_gate.passed",
+                spec_id=spec_id,
+                artifact=code_artifact_ref,
+            )
+            return {"blocked": False}
+
+        except Exception as e:
+            logger.warning(
+                "attractor.darrow_gate.unavailable",
+                error=str(e),
+                spec_id=spec_id,
+            )
+            return {"blocked": False}
 
     async def _evaluate(self, spec_id: str, spec: dict) -> tuple[float, dict[str, float], float]:
         """Execute scenarios + Judge-01 evaluation. Returns (score, criteria_scores, cost)."""
